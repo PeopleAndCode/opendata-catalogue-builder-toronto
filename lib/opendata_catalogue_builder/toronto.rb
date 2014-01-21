@@ -1,48 +1,39 @@
 require "opendata_catalogue_builder/toronto/version"
 require "nokogiri"
 require "open-uri"
-require 'uri'
+require "uri"
 require "cgi"
+require "mongo"
+require "ruby-progressbar"
 
 module OpendataCatalogueBuilder
   module Toronto
+
+    extend self
+    include Mongo
     
     @@base_url ="http://www1.toronto.ca"
 
-    def self.make_list
+    def catalogue_list
+      @catalogue_list
+    end
+
+    def make_list
       first = make_list_xml
       second = make_list_html
+      combined = []
 
-      combined = recursive_merge(second, first)
-    end
-
-    def self.make_list_xml
-      url = "#{@@base_url}/cot-templating/views/rss20view.jsp?vgnextoid=1a66e03bb8d1e310VgnVCM10000071d60f89RCRD&compid=1b4eadba5a72e310VgnVCM10000071d60f89RCRD"
-      list = {}
-      doc = connect(url, :xml)
-
-      doc.css('item').each do |item|
-        title = item.css('title').text
-        description = item.css('description').text
-        portal_page = item.css('link').text
-        guid = item.css('guid').text
-        updated = item.css('pubDate').text
-
-        list[guid] = {
-          title: title,
-          description: description,
-          updated: updated,
-          portal_page: portal_page
-        }
+      second.each do |guid, values|
+        combined.push(first[guid].merge(second[guid]))
       end
 
-      list
+      @catalogue_list = combined
     end
 
-    def self.make_list_html
+    def make_list_html
       url = "#{@@base_url}/wps/portal/contentonly?vgnextoid=1a66e03bb8d1e310VgnVCM10000071d60f89RCRD"
       list = {}
-      doc = connect(url)
+      doc = scrape(url)
 
       doc.css('.alpha .article').each do |item|
         # title = item.css('h4 a').text
@@ -61,22 +52,60 @@ module OpendataCatalogueBuilder
       list
     end
 
-    private
+    def make_list_xml
+      url = "#{@@base_url}/cot-templating/views/rss20view.jsp?vgnextoid=1a66e03bb8d1e310VgnVCM10000071d60f89RCRD&compid=1b4eadba5a72e310VgnVCM10000071d60f89RCRD"
+      list = {}
+      doc = scrape(url, :xml)
 
-    def self.connect(url, type=:html)
-      type = type.downcase.to_sym
-      if type === :xml
-        return Nokogiri::XML(open(url)) do |config|
-          config.noblanks
-        end
-      else
-        return Nokogiri::HTML(open(url)) do |config|
-          config.noblanks
+      doc.css('item').each do |item|
+        title = item.css('title').text
+        description = item.css('description').text
+        portal_page = item.css('link').text
+        guid = item.css('guid').text
+        updated = item.css('pubDate').text
+
+        list[guid] = {
+          title: title,
+          guid: guid,
+          description: description,
+          portal_page: portal_page,
+          updated: updated
+        }
+      end
+
+      list
+    end
+
+    def save_all
+      database = database_connect
+
+      progressbar = ProgressBar.create(
+        :title => "Uploaded", 
+        :total => @catalogue_list.size, 
+        :format => '%a %E |%b>>%i| %c of %C / %p%% %t'
+      )
+      
+      system "clear" unless system "cls"
+
+      @catalogue_list.each do |document|
+        database.connection.reconnect
+        if database.collection('Toronto').update({guid: document["guid"]} , document, {upsert: true})
+          progressbar.increment
+        else
+          return "Error"
         end
       end
     end
 
-    def self.find_file_formats(object)
+    private
+
+    def database_connect
+      connection = MongoClient.new(ENV['MONGO_URL'], ENV['MONGO_PORT']).db('opendata_catalogue')
+      connection.authenticate(ENV['MONGO_USERNAME'], ENV['MONGO_PASSWORD'])
+      connection
+    end
+
+    def find_file_formats(object)
       format = object.css('.format').text.strip.split(", ")
       
       format.each_with_index do |value, key|
@@ -95,15 +124,17 @@ module OpendataCatalogueBuilder
       format.flatten
     end
 
-    def self.recursive_merge( merge_from, merge_to )
-      merged_hash = merge_to.clone
-      first_key = merge_from.keys[0]
-      if merge_to.has_key?(first_key)
-          merged_hash[first_key] = recursive_merge( merge_from[first_key], merge_to[first_key] )
+    def scrape(url, type=:html)
+      type = type.downcase.to_sym
+      if type === :xml
+        return Nokogiri::XML(open(url)) do |config|
+          config.noblanks
+        end
       else
-          merged_hash[first_key] = merge_from[first_key]
+        return Nokogiri::HTML(open(url)) do |config|
+          config.noblanks
+        end
       end
-      merged_hash
     end
 
   end
