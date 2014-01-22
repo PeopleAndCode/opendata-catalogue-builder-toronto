@@ -1,11 +1,11 @@
 # coding: utf-8
 lib = File.expand_path('../lib', __FILE__)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
-require 'opendata_catalogue_builder/toronto/version'
+require 'opendata/catalogue/builder/toronto/version'
 
 Gem::Specification.new do |spec|
-  spec.name          = "opendata_catalogue_builder-toronto"
-  spec.version       = OpendataCatalogueBuilder::Toronto::VERSION
+  spec.name          = "opendata-catalogue-builder-toronto"
+  spec.version       = Opendata::Catalogue::Builder::Toronto::VERSION
   spec.authors       = ["Raymond Kao"]
   spec.email         = ["ray@peopleandcode.com"]
   spec.description   = %q{TODO: Write a gem description}
