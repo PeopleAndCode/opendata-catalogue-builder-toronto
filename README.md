@@ -1,4 +1,4 @@
-# OpendataCatalogueBuilder::Toronto
+# Opendata::Catalogue::Builder::Toronto
 
 TODO: Write a gem description
 
@@ -6,7 +6,7 @@ TODO: Write a gem description
 
 Add this line to your application's Gemfile:
 
-    gem 'opendata_catalogue_builder-toronto'
+    gem 'opendata-catalogue-builder-toronto'
 
 And then execute:
 
@@ -14,7 +14,7 @@ And then execute:
 
 Or install it yourself as:
 
-    $ gem install opendata_catalogue_builder-toronto
+    $ gem install opendata-catalogue-builder-toronto
 
 ## Usage
 
