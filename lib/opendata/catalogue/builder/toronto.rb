@@ -1,8 +1,8 @@
 require "opendata/catalogue/builder/toronto/version"
+require "mongo"
 require "nokogiri"
 require "open-uri"
 require "uri"
-require "mongo"
 require "ruby-progressbar"
 
 module Opendata
@@ -22,6 +22,50 @@ module Opendata
 
           puts "Complete: #{@passed} passed | #{@failed.size} failed."
           self
+        end
+
+        def get_datasets(url)
+          dataset = []
+          doc = scrape(url)
+          links = doc.css('.single-item dd').last.css('li a').to_a   
+
+          if !links.empty?
+            links.each do |item|
+              title = item.text
+              href = URI.encode(item.attr('href'))
+              uri = URI.parse(href)
+
+              link = !!uri.host ? "#{item.attr('href')}" : "#{@@base_url}#{href}"
+
+              if link.include?("google.com")
+                google_doc = URI.parse(link)
+                file_name = google_doc.query
+                file_type = google_doc.path.split('/')[1]
+                if file_type === "fusiontables"
+                  file_type = "Google Fusion Table"
+
+                elsif file_type === "spreadsheet"
+                  file_type = "Google Spread Sheet"
+                else
+                  file_type = "Google Doc"
+                end
+              else
+                file_name = Pathname.new(href).basename.to_s
+                file_type = File.extname(file_name)
+              end
+
+              dataset.push({
+                title: title,
+                file: {
+                  file_name: file_name,
+                  file_type: file_type,
+                  link: link
+                }
+              })
+            end
+          end
+
+          dataset.empty? ? nil : dataset
         end
 
         def make_datasets(list)
@@ -53,46 +97,6 @@ module Opendata
           end
         end
 
-        def get_datasets(url)
-          dataset = []
-          doc = scrape(url)
-          links = doc.css('.single-item dd').last.css('li a').to_a   
-
-          links.each do |item|
-            title = item.text
-            href = URI.encode(item.attr('href'))
-            uri = URI.parse(href)
-
-            link = !!uri.host ? "#{item.attr('href')}" : "#{@@base_url}#{href}"
-
-            if link.include?("google.com")
-              google_doc = URI.parse(link)
-              file_name = google_doc.query
-              file_type = google_doc.path.split('/')[1]
-              if file_type === "fusiontables"
-                file_type = "Google Fusion Table"
-
-              elsif file_type === "spreadsheet"
-                file_type = "Google Spread Sheet"
-              end
-            else
-              file_name = Pathname.new(href).basename.to_s
-              file_type = File.extname(file_name)
-            end
-
-            dataset.push({
-              title: title,
-              file: {
-                file_name: file_name,
-                file_type: file_type,
-                link: link
-              }
-            })
-          end
-
-          dataset.empty? ? nil : dataset
-        end
-
         def make_list
           @catalogue_list = {}
           first = make_list_xml
@@ -120,7 +124,7 @@ module Opendata
               query = URI.parse(portal_page).query
               guid = CGI::parse(query)
               guid = guid["vgnextoid"].first
-              format = find_file_formats(item)
+              format = file_formats(item)
 
               list[guid] = {
                 formats: format
@@ -161,7 +165,7 @@ module Opendata
           list
         end
 
-        def save_all
+        def save
           database = database_connect
 
           progressbar = ProgressBar.create(
@@ -181,13 +185,39 @@ module Opendata
             end
             database.connection.close
           end
-
           self
         end
 
-        def scrape(url, type=:html)
+        private
+
+        def database_connect
+          connection = MongoClient.new(ENV['MONGO_URL'], ENV['MONGO_PORT']).db('opendata_catalogue')
+          connection.authenticate(ENV['MONGO_USERNAME'], ENV['MONGO_PASSWORD'])
+          connection
+        end
+
+        def file_formats(object)
+          format = object.css('.format').text.strip.split(", ")
+          
+          format.each_with_index do |value, key|
+            value.strip!
+            if value.include?("/")
+              format[key] = value.split("/").flatten
+            elsif value.include?(" and ")
+              format[key] = value.split(" and ")
+            elsif value === "CSV File"
+              format[key] = value = "CSV"
+            elsif value === "XLS File"
+              format[key] = value = "XLS"
+            end
+          end
+
+          format.flatten
+        end
+
+        def scrape(url, type=:html, options={})
           attempts = 0
-          max_attempts = 2
+          max_attempts = options[:max_attempts] ||= 2
           connection = nil
 
           type = type.downcase.to_sym
@@ -208,33 +238,6 @@ module Opendata
           end
 
           connection
-        end
-
-        private
-
-        def database_connect
-          connection = MongoClient.new(ENV['MONGO_URL'], ENV['MONGO_PORT']).db('opendata_catalogue')
-          connection.authenticate(ENV['MONGO_USERNAME'], ENV['MONGO_PASSWORD'])
-          connection
-        end
-
-        def find_file_formats(object)
-          format = object.css('.format').text.strip.split(", ")
-          
-          format.each_with_index do |value, key|
-            value.strip!
-            if value.include?("/")
-              format[key] = value.split("/").flatten
-            elsif value.include?(" and ")
-              format[key] = value.split(" and ")
-            elsif value === "CSV File"
-              format[key] = value = "CSV"
-            elsif value === "XLS File"
-              format[key] = value = "XLS"
-            end
-          end
-
-          format.flatten
         end
 
       end
