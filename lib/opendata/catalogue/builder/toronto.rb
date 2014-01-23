@@ -19,8 +19,6 @@ module Opendata
 
         def add_datasets
           make_datasets(@catalogue_list)
-
-          puts "Complete: #{@passed} passed | #{@failed.size} failed."
           self
         end
 
@@ -72,14 +70,9 @@ module Opendata
           @passed = 0
           @failed = {}
 
-          progressbar = ProgressBar.create(
-            :title => "Complete", 
-            :total => @catalogue_list.size, 
-            :format => '%a %E |%b>>%i| %c of %C / %p%% %t',
-            :smoothing => 0.6
-          )
-          
-          system "clear" unless system "cls"
+          puts "Getting datasets...process may pause briefly..."
+
+          progressbar = progress(list, "Datasets Completed")
 
           list.each do |(guid, document)|
             progressbar.increment
@@ -95,6 +88,8 @@ module Opendata
 
             end
           end
+          puts "Complete: #{@passed} passed | #{@failed.size} failed."
+
         end
 
         def make_list
@@ -115,9 +110,14 @@ module Opendata
           url = "#{@@base_url}/wps/portal/contentonly?vgnextoid=1a66e03bb8d1e310VgnVCM10000071d60f89RCRD"
           list = {}
           doc = scrape(url)
+          doc = doc.css('.alpha .article').to_a
+          
+          puts "Scraping HTML..."
 
           if doc
-            doc.css('.alpha .article').each do |item|
+            progressbar = progress(doc, "Done Scraping HTML")
+
+            doc.each do |item|
               # title = item.css('h4 a').text
               # description = item.css('.description p').text
               portal_page = item.css('h4 a').attr('href').text
@@ -129,21 +129,31 @@ module Opendata
               list[guid] = {
                 formats: format
               }
+
+              progressbar.increment
             end
           else
             nil
           end
 
+          puts "Finished scraping HTML.\n\r"
+
           list
         end
 
         def make_list_xml
+
           url = "#{@@base_url}/cot-templating/views/rss20view.jsp?vgnextoid=1a66e03bb8d1e310VgnVCM10000071d60f89RCRD&compid=1b4eadba5a72e310VgnVCM10000071d60f89RCRD"
           list = {}
           doc = scrape(url, :xml)
+          doc= doc.css('item').to_a
+
+          puts "Parsing XML..."
 
           if doc
-            doc.css('item').each do |item|
+            progressbar = progress(doc, "Done Parsing XML")
+
+            doc.each do |item|
               title = item.css('title').text
               description = item.css('description').text
               portal_page = item.css('link').text
@@ -157,35 +167,76 @@ module Opendata
                 portal_page: portal_page,
                 updated: updated
               }
+
+              progressbar.increment
             end
           else
             nil
           end
 
+          puts "Finished parsing XML.\n\r"
+
           list
         end
 
+        def run
+          system "clear" unless system "cls"
+
+          make_list
+          add_datasets
+          save
+        end
+
         def save
+          @saved = 0
+          @errors = {}
+
           database = database_connect
 
-          progressbar = ProgressBar.create(
-            :title => "Uploaded", 
-            :total => @catalogue_list.size, 
-            :format => '%a %E |%b>>%i| %c of %C / %p%% %t'
-          )
-          
-          system "clear" unless system "cls"
+          puts "Saving to database..."
+
+          progressbar = progress(@catalogue_list, "Saved.")
 
           @catalogue_list.each do |(guid, document)|
             database.connection.reconnect
             if database.collection('Toronto').update({guid: document[:guid]} , document, {upsert: true})
               progressbar.increment
+              @saved += 1
             else
-              return "Error"
+              @errors[guid] = document
+              puts "Save error."
+              next
             end
             database.connection.close
           end
+
+          puts "Completed: #{@saved} saved  | #{@errors.size} errors.\n\r"
           self
+        end
+
+        def scrape(url, type=:html, options={})
+          attempts = 0
+          max_attempts = options[:max_attempts] ||= 2
+          connection = nil
+
+          type = type.downcase.to_sym
+          
+          begin
+            if type === :xml
+              connection = Nokogiri::XML(open(url)) do |config|
+                config.noblanks
+              end
+            else
+              connection = Nokogiri::HTML(open(url)) do |config|
+                config.noblanks
+              end
+            end
+          rescue Exception => ex
+            attempts += 1
+            retry if(attempts < max_attempts)
+          end
+
+          connection
         end
 
         private
@@ -215,30 +266,16 @@ module Opendata
           format.flatten
         end
 
-        def scrape(url, type=:html, options={})
-          attempts = 0
-          max_attempts = options[:max_attempts] ||= 2
-          connection = nil
-
-          type = type.downcase.to_sym
-          
-          begin
-            if type === :xml
-              connection = Nokogiri::XML(open(url)) do |config|
-                config.noblanks
-              end
-            else
-              connection = Nokogiri::HTML(open(url)) do |config|
-                config.noblanks
-              end
-            end
-          rescue Exception => ex
-            attempts += 1
-            retry if(attempts < max_attempts)
-          end
-
-          connection
+        def progress(array, title)
+          return ProgressBar.create(
+            :title => title, 
+            :total => array.size, 
+            :format => '%a %E |%b>>%i| %c of %C / %p%% %t',
+            :smoothing => 0.6
+          )
         end
+
+        
 
       end
     end
