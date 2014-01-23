@@ -25,7 +25,7 @@ module Opendata
         def get_datasets(url)
           dataset = []
           doc = scrape(url)
-          links = doc.css('.single-item dd').last.css('li a').to_a   
+          links = doc.css('.single-item dd').last.css('li a').to_a ||= []
 
           if !links.empty?
             links.each do |item|
@@ -195,16 +195,16 @@ module Opendata
 
           puts "Saving to database..."
 
-          progressbar = progress(@catalogue_list, "Saved.")
+          progressbar = progress(@catalogue_list, "Saved")
 
           @catalogue_list.each do |(guid, document)|
             database.connection.reconnect
-            if database.collection('Toronto').update({guid: document[:guid]} , document, {upsert: true})
+            if database.collection('toronto').update({guid: document[:guid]} , document, {upsert: true})
               progressbar.increment
               @saved += 1
             else
               @errors[guid] = document
-              puts "Save error."
+              puts "There was a save error."
               next
             end
             database.connection.close
@@ -273,9 +273,7 @@ module Opendata
             :format => '%a %E |%b>>%i| %c of %C / %p%% %t',
             :smoothing => 0.6
           )
-        end
-
-        
+        end      
 
       end
     end
